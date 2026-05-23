@@ -1,15 +1,16 @@
-# Fabric Style Recommender
-
 # fabrica
 
-A minimal React and Tailwind CSS frontend for an intelligent fabric-to-style recommendation application.
+A minimal React and Tailwind CSS frontend for a fabric-to-style simulation system.
 
 ## Features
 
-- Captures fabric color, type, texture, pattern, and intended occasion.
-- Supports optional fabric image upload with lightweight browser-based color and brightness extraction.
-- Generates style recommendations from the processed fabric attributes.
-- Uses a white, minimal configurator layout inspired by product customization flows without purchase or checkout UI.
+- Uploads fabric and style reference images.
+- Captures fabric color, type, texture, and pattern.
+- Supports gender and style template selection.
+- Records and validates body measurements.
+- Estimates required fabric yardage and completion time.
+- Generates a printable estimate summary with collection mode and cost breakdown.
+- Uses a white, minimal simulation layout inspired by product configurators without checkout UI.
 
 ## Run
 
