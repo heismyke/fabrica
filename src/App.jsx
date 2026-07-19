@@ -34,7 +34,7 @@ const colors = [
   { name: "Slate Blue", value: "#5d708e" },
 ];
 
-const fabricTypes = ["Cotton", "Silk", "Linen", "Chiffon", "Denim", "Wool"];
+const fabricTypes = ["Cotton", "Silk", "Linen", "Chiffon", "Lace", "Wool"];
 const textures = ["Smooth", "Crisp", "Soft", "Ribbed", "Sheer", "Structured"];
 const patterns = ["Plain", "Stripes", "Check", "Floral"];
 const genders = ["Female", "Male"];
@@ -54,6 +54,17 @@ const styleTemplates = {
     { name: "Kaftan", complexity: 1.28, labor: 19000, days: 4, silhouette: "Roomy line with emphasis on shoulder and length." },
     { name: "Two-piece suit", complexity: 1.72, labor: 38000, days: 8, silhouette: "Most exacting fit with higher pressing and finishing time." },
   ],
+};
+
+const styleYardageProfiles = {
+  "A-line dress": { base: 2.15, chest: 0.012, hip: 0.021, length: 0.041, sleeve: 0.006, shoulder: 0.007, fullness: 0.35 },
+  "Blouse and skirt": { base: 2.0, chest: 0.018, hip: 0.018, length: 0.028, sleeve: 0.009, shoulder: 0.008, fullness: 0.2 },
+  Jumpsuit: { base: 2.55, chest: 0.016, hip: 0.021, length: 0.046, sleeve: 0.013, shoulder: 0.008, fullness: 0.45 },
+  "Evening gown": { base: 3.15, chest: 0.014, hip: 0.026, length: 0.064, sleeve: 0.007, shoulder: 0.007, fullness: 0.9 },
+  "Native set": { base: 2.45, chest: 0.019, hip: 0.014, length: 0.037, sleeve: 0.015, shoulder: 0.011, fullness: 0.32 },
+  "Long sleeve shirt": { base: 1.75, chest: 0.021, hip: 0.01, length: 0.032, sleeve: 0.019, shoulder: 0.012, fullness: 0.08 },
+  Kaftan: { base: 2.65, chest: 0.017, hip: 0.014, length: 0.044, sleeve: 0.014, shoulder: 0.011, fullness: 0.42 },
+  "Two-piece suit": { base: 3.05, chest: 0.022, hip: 0.017, length: 0.038, sleeve: 0.017, shoulder: 0.016, fullness: 0.72 },
 };
 
 const patternClasses = {
@@ -252,11 +263,11 @@ function analyzeStyleImage(src) {
 
 function inferFabricType(signal) {
   const candidates = [
-    { name: "Cotton", score: 54 },
+    { name: "Cotton", score: 48 },
     { name: "Silk", score: 50 },
     { name: "Linen", score: 50 },
     { name: "Chiffon", score: 48 },
-    { name: "Denim", score: 46 },
+    { name: "Lace", score: 48 },
     { name: "Wool", score: 46 },
   ];
 
@@ -288,11 +299,11 @@ function inferFabricType(signal) {
       score += signal.spread <= 55 ? 6 : 0;
     }
 
-    if (candidate.name === "Denim") {
-      score += signal.brightness < 120 ? 12 : 0;
-      score += signal.texture === "Structured" || signal.texture === "Ribbed" ? 10 : 0;
-      score += signal.contrast >= 26 ? 10 : 0;
-      score += signal.spread < 35 ? 4 : 0;
+    if (candidate.name === "Lace") {
+      score += signal.edgeDensity >= 30 ? 14 : 0;
+      score += signal.contrast >= 20 ? 10 : 0;
+      score += signal.brightness > 150 ? 8 : 0;
+      score += signal.texture === "Sheer" ? 8 : 0;
     }
 
     if (candidate.name === "Wool") {
@@ -367,13 +378,32 @@ function inferStyleProfile(signal, gender) {
   };
 }
 
-function calculateSummary({ gender, style, fabricType, pattern, texture, measurements, collectionMode, fabricPrice, hasFabricImage }) {
-  const baseYardage = gender === "Female" ? 4 : 3.25;
-  const bodyFactor = (measurements.chest + measurements.hip + measurements.length) / 155;
+function calculateSummary({ style, fabricType, pattern, texture, measurements, collectionMode, fabricPrice, hasFabricImage, styleInsight }) {
+  const profile = styleYardageProfiles[style.name] || styleYardageProfiles["A-line dress"];
+  const styleReferenceAllowance =
+    styleInsight?.preferredStyles?.[0] === style.name
+      ? styleInsight.silhouette === "elongated"
+        ? 0.35
+        : styleInsight.silhouette === "draped"
+          ? 0.25
+          : 0.1
+      : 0;
   const patternAllowance = pattern === "Plain" ? 0 : pattern === "Floral" ? 0.4 : 0.25;
-  const fabricAllowance = ["Chiffon", "Silk"].includes(fabricType) ? 0.25 : fabricType === "Wool" ? 0.15 : 0;
+  const fabricAllowance = ["Chiffon", "Silk", "Lace"].includes(fabricType) ? 0.25 : fabricType === "Wool" ? 0.35 : 0;
   const textureAllowance = texture === "Structured" ? 0.2 : texture === "Sheer" ? 0.3 : 0.1;
-  const yardage = Math.ceil((baseYardage + bodyFactor * style.complexity + patternAllowance + fabricAllowance + textureAllowance) * 2) / 2;
+  const rawYardage =
+    profile.base +
+    measurements.chest * profile.chest +
+    measurements.hip * profile.hip +
+    measurements.length * profile.length +
+    measurements.sleeve * profile.sleeve +
+    measurements.shoulder * profile.shoulder +
+    profile.fullness * style.complexity +
+    patternAllowance +
+    fabricAllowance +
+    textureAllowance +
+    styleReferenceAllowance;
+  const yardage = Math.ceil(rawYardage * 4) / 4;
   const deliveryFee = collectionMode === "Delivery" ? 3500 : 0;
   const materialEstimate = yardage * fabricPrice;
   const pressingFee = style.complexity > 1.5 ? 4500 : 2000;
@@ -385,7 +415,7 @@ function calculateSummary({ gender, style, fabricType, pattern, texture, measure
         (hasFabricImage ? 9 : 0) +
         (texture === "Structured" && style.complexity > 1.5 ? 5 : 0) +
         (pattern !== "Plain" ? 3 : 0) -
-        (fabricType === "Chiffon" && style.complexity > 1.5 ? 4 : 0)
+        ((fabricType === "Chiffon" || fabricType === "Lace") && style.complexity > 1.5 ? 4 : 0)
     ),
     72,
     96
@@ -444,7 +474,11 @@ function getFabricSignalScore(candidate, fabricType, texture, pattern, imageSign
     score += 8;
   }
 
-  if (["Wool", "Denim"].includes(fabricType) && ["Two-piece suit", "Jumpsuit", "Native set", "Long sleeve shirt"].includes(candidate.name)) {
+  if (fabricType === "Wool" && ["Two-piece suit", "Jumpsuit", "Native set", "Long sleeve shirt"].includes(candidate.name)) {
+    score += 8;
+  }
+
+  if (fabricType === "Lace" && ["Evening gown", "A-line dress", "Blouse and skirt"].includes(candidate.name)) {
     score += 8;
   }
 
@@ -573,12 +607,13 @@ function buildStyleRecommendations({
         collectionMode,
         fabricPrice,
         hasFabricImage,
+        styleInsight,
       });
 
       const templateDelta = Math.abs(candidate.complexity - selectedTemplate.complexity);
       const availableGap = availableYardage > 0 ? Number((availableYardage - summary.yardage).toFixed(1)) : null;
       const worksWithAvailableFabric = availableGap === null ? true : availableGap >= 0;
-      const complexityPenalty = fabricType === "Chiffon" && candidate.complexity > 1.45 ? 7 : 0;
+      const complexityPenalty = ["Chiffon", "Lace"].includes(fabricType) && candidate.complexity > 1.45 ? 7 : 0;
       const patternPenalty = pattern === "Floral" && candidate.complexity > 1.55 ? 5 : 0;
       const templateAlignment = getTemplateAlignmentScore(candidate, selectedTemplate);
       const materialSignalScore = getFabricSignalScore(candidate, fabricType, texture, pattern, imageSignal);
@@ -744,7 +779,6 @@ export default function App() {
   const activeStyle = selectedRecommendation || style;
   const summary = selectedRecommendation?.summary ||
     calculateSummary({
-      gender,
       style,
       fabricType,
       pattern,
@@ -753,9 +787,12 @@ export default function App() {
       collectionMode,
       fabricPrice: parsedFabricPrice,
       hasFabricImage: Boolean(fabricPreview),
+      styleInsight,
     });
   const viableAlternatives = styleRecommendations.filter((item) => item.name !== selectedStyle && item.worksWithAvailableFabric).slice(0, 3);
-  const topGeneratedStyles = styleRecommendations.slice(0, 4);
+  const topGeneratedStyles = styleInsight
+    ? styleRecommendations.filter((item) => item.name === selectedStyle).slice(0, 1)
+    : styleRecommendations.slice(0, 4);
 
   const validation = useMemo(
     () => getValidationState({ ...measurements, availableYardage }, fabricPrice, fabricPreview, stylePreview),
@@ -784,18 +821,18 @@ export default function App() {
         const inferred = inferFabricType(signal);
         setImageSignal(signal);
         setTexture(signal.texture);
-        if (inferred.confidence >= 72) {
-          setFabricType(inferred.type);
-          setStatusMessage(`Fabric scan complete. Detected ${inferred.type.toLowerCase()} with ${inferred.confidence}% reliability and auto-applied it.`);
-        } else {
-          setStatusMessage(`Fabric scan complete. Low-reliability signal for ${inferred.type.toLowerCase()} (${inferred.confidence}%), so your current fabric type remains active.`);
-        }
+        setFabricType(inferred.type);
+        setStatusMessage(`Fabric scan complete. Detected ${inferred.type.toLowerCase()} with ${inferred.confidence}% reliability and auto-applied it. You can override the fabric type manually.`);
       } else {
         setStylePreview(src);
         const signal = await analyzeStyleImage(src);
         const inferred = inferStyleProfile(signal, gender);
         setStyleImageSignal(signal);
-        setStatusMessage(`Style reference uploaded. Detected a ${inferred.silhouette} silhouette cue with ${inferred.confidence}% reliability.`);
+        const preferredStyle = inferred.preferredStyles[0];
+        if (preferredStyle) {
+          setSelectedStyle(preferredStyle);
+        }
+        setStatusMessage(`Style reference uploaded. ${preferredStyle || "The closest style"} is now prioritized from a ${inferred.silhouette} silhouette cue with ${inferred.confidence}% reliability.`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "The upload could not be completed.";
@@ -941,7 +978,7 @@ export default function App() {
                 <h2 className="mt-2 [font-family:var(--font-display)] text-3xl">{activeStyle.name}</h2>
               </div>
               <div className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-stone-200">
-                {selectedColor.name} / {fabricType} / {summary.yardage.toFixed(1)} yards
+                {selectedColor.name} / {fabricType} / {summary.yardage.toFixed(1)} required yards
               </div>
             </div>
 
@@ -955,12 +992,19 @@ export default function App() {
                   <img src={fabricPreview} alt="Uploaded fabric preview" className="absolute inset-0 h-full w-full object-cover mix-blend-multiply opacity-70" />
                 ) : null}
               </div>
-              <GarmentPreview gender={gender} styleName={activeStyle.name} stylePreview={stylePreview} />
+              <GarmentPreview
+                fabricPreview={fabricPreview}
+                gender={gender}
+                pattern={pattern}
+                selectedColor={selectedColor}
+                styleName={activeStyle.name}
+                stylePreview={stylePreview}
+              />
             </div>
 
             <div className="mt-4 flex flex-wrap gap-3">
               <PreviewBadge label="Style" value={activeStyle.name} />
-              <PreviewBadge label="Estimated yardage" value={`${summary.yardage.toFixed(1)} yards`} />
+              <PreviewBadge label="Required yardage" value={`${summary.yardage.toFixed(1)} yards`} />
               <PreviewBadge label="Recommended texture" value={imageSignal?.texture || texture} />
               <PreviewBadge label="Turnaround" value={`${summary.completionDays} days`} />
             </div>
@@ -973,7 +1017,7 @@ export default function App() {
             <div className="mt-5 rounded-[22px] border border-white/10 bg-white/5 p-4 backdrop-blur-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-300">Auto-generated fit</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-300">Fit status</p>
                   <p className="mt-2 text-sm text-stone-100">
                     {selectedRecommendation?.worksWithAvailableFabric
                       ? `${selectedStyle} fits within the available cloth and remains one of the strongest generated options.`
@@ -994,7 +1038,7 @@ export default function App() {
               />
               <InsightCard
                 title="Style reference cue"
-                value={styleInsight ? `${styleInsight.silhouette} silhouette detected. Preferred styles: ${styleInsight.preferredStyles.join(", ")}.` : "Upload a style reference to bias recommendations toward similar silhouettes."}
+                value={styleInsight ? `${selectedStyle} is prioritized from the uploaded ${styleInsight.silhouette} silhouette. Manual template changes still override it.` : "Upload a style reference to identify and prioritize the closest matching style template."}
                 icon={<Camera size={17} />}
               />
             </div>
@@ -1046,7 +1090,7 @@ export default function App() {
               />
               <UploadButton
                 label="Style reference"
-                detail={stylePreview ? "Reference board updated" : "Optional silhouette cue"}
+                detail={stylePreview ? `${selectedStyle} prioritized` : "Image of the preferred style"}
                 icon={<Camera size={18} />}
                 onClick={() => styleInputRef.current?.click()}
               />
@@ -1108,10 +1152,12 @@ export default function App() {
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-stone-500">Generated styles</p>
-                <h2 className="mt-3 [font-family:var(--font-display)] text-4xl text-stone-950">Auto-recommended options from the uploaded fabric</h2>
+                <h2 className="mt-3 [font-family:var(--font-display)] text-4xl text-stone-950">{styleInsight ? "Prioritized uploaded style" : "Auto-recommended options from the uploaded fabric"}</h2>
               </div>
               <p className="max-w-xl text-sm leading-7 text-stone-600">
-                Fabrica now derives yardage for each style under the selected gender, compares that against the cloth you have on hand, and ranks the strongest options.
+                {styleInsight
+                  ? "The uploaded style reference is treated as the primary style direction. Yardage is calculated from that style and the client measurements."
+                  : "Fabrica derives yardage for each style under the selected gender, compares that against the cloth you have on hand, and ranks the strongest options."}
               </p>
             </div>
 
@@ -1136,7 +1182,7 @@ export default function App() {
                   </div>
 
                   <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                    <MetricCard label="Estimated yards" value={`${item.summary.yardage.toFixed(1)} yards`} icon={<Ruler size={15} />} tone={item.name === selectedStyle ? "dark" : "light"} />
+                    <MetricCard label="Required yards" value={`${item.summary.yardage.toFixed(1)} yards`} icon={<Ruler size={15} />} tone={item.name === selectedStyle ? "dark" : "light"} />
                     <MetricCard label="Completion" value={`${item.summary.completionDays} days`} icon={<CalendarDays size={15} />} tone={item.name === selectedStyle ? "dark" : "light"} />
                   </div>
 
@@ -1240,7 +1286,7 @@ export default function App() {
             </div>
 
             <div className="mt-6 grid grid-cols-2 gap-3 text-sm text-stone-700">
-              <Metric label="Yardage" value={`${summary.yardage.toFixed(1)} yards`} />
+              <Metric label="Required yardage" value={`${summary.yardage.toFixed(1)} yards`} />
               <Metric label="Available cloth" value={parsedAvailableYardage > 0 ? `${parsedAvailableYardage.toFixed(1)} yards` : "Add quantity"} icon={<Ruler size={16} />} />
               <Metric label="Completion" value={`${summary.completionDays} days`} icon={<CalendarDays size={16} />} />
               <Metric label="Texture" value={imageSignal?.texture || texture} />
@@ -1271,7 +1317,9 @@ export default function App() {
             <div className="mt-6 rounded-[24px] border border-stone-200 bg-white/80 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Alternative styles for available material</p>
               <div className="mt-4 space-y-3">
-                {viableAlternatives.length > 0 ? (
+                {styleInsight ? (
+                  <p className="text-sm leading-6 text-stone-600">Style reference mode is active, so alternatives are hidden until you manually choose another template or replace the reference.</p>
+                ) : viableAlternatives.length > 0 ? (
                   viableAlternatives.map((item) => (
                     <button
                       key={item.name}
@@ -1344,18 +1392,50 @@ export default function App() {
   );
 }
 
-function GarmentPreview({ gender, styleName, stylePreview }) {
+function GarmentPreview({ fabricPreview, gender, pattern, selectedColor, styleName, stylePreview }) {
+  const garmentPieceStyle = {
+    backgroundColor: selectedColor.value,
+    backgroundImage: fabricPreview ? `url(${fabricPreview})` : undefined,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  };
+
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
       {stylePreview ? (
-        <img src={stylePreview} alt="Uploaded style reference" className="absolute right-[9%] top-[12%] h-[44%] w-[32%] rounded-[24px] object-cover opacity-25 mix-blend-screen shadow-[0_18px_60px_rgba(0,0,0,0.28)]" />
+        <img src={stylePreview} alt="Uploaded style reference" className="absolute inset-[12px] h-[calc(100%-24px)] w-[calc(100%-24px)] rounded-[20px] object-cover opacity-20 mix-blend-screen" />
       ) : null}
-      <div className="relative h-[70%] w-[40%] min-w-[220px] max-w-[280px]">
+      <div className={`relative h-[70%] w-[40%] min-w-[220px] max-w-[280px] ${patternClasses[pattern]}`}>
         <div className="absolute left-1/2 top-0 h-[15%] w-[19%] -translate-x-1/2 rounded-full border border-white/30 bg-white/15 backdrop-blur-sm" />
-        <div className="absolute left-1/2 top-[13%] h-[56%] w-[46%] -translate-x-1/2 rounded-t-[42%] border border-white/35 bg-[linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.05))] shadow-[inset_0_32px_70px_rgba(255,255,255,0.2)]" />
-        <div className="absolute left-[11%] top-[20%] h-[35%] w-[24%] -rotate-[13deg] rounded-full border border-white/20 bg-white/10" />
-        <div className="absolute right-[11%] top-[20%] h-[35%] w-[24%] rotate-[13deg] rounded-full border border-white/20 bg-white/10" />
-        <div className={`absolute bottom-[5%] left-1/2 h-[31%] -translate-x-1/2 border border-white/25 bg-white/10 ${gender === "Female" ? "w-[66%] rounded-b-[46%]" : "w-[48%] rounded-b-[18px]"}`} />
+        <div
+          className={`absolute left-1/2 top-[13%] h-[56%] -translate-x-1/2 border border-white/45 bg-blend-multiply shadow-[inset_0_32px_70px_rgba(255,255,255,0.24),0_18px_50px_rgba(0,0,0,0.16)] ${
+            styleName === "Two-piece suit"
+              ? "w-[52%] rounded-t-[18px]"
+              : styleName === "Jumpsuit"
+                ? "w-[50%] rounded-t-[34%]"
+                : "w-[46%] rounded-t-[42%]"
+          }`}
+          style={garmentPieceStyle}
+        />
+        <div
+          className="absolute left-[11%] top-[20%] h-[35%] w-[24%] -rotate-[13deg] rounded-full border border-white/35 bg-blend-multiply"
+          style={garmentPieceStyle}
+        />
+        <div
+          className="absolute right-[11%] top-[20%] h-[35%] w-[24%] rotate-[13deg] rounded-full border border-white/35 bg-blend-multiply"
+          style={garmentPieceStyle}
+        />
+        <div
+          className={`absolute bottom-[5%] left-1/2 h-[31%] -translate-x-1/2 border border-white/35 bg-blend-multiply ${
+            gender === "Female" ? "w-[66%] rounded-b-[46%]" : "w-[48%] rounded-b-[18px]"
+          } ${styleName === "Evening gown" ? "h-[42%] w-[78%] rounded-b-[50%]" : ""} ${styleName === "Long sleeve shirt" ? "h-[22%] w-[42%] rounded-b-[12px]" : ""}`}
+          style={garmentPieceStyle}
+        />
+        {fabricPreview ? (
+          <div className="absolute bottom-[-12%] left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-black/35 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/85 backdrop-blur-sm">
+            Live fabric composite
+          </div>
+        ) : null}
       </div>
     </div>
   );
