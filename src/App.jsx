@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -721,6 +721,84 @@ function getRecommendation(style, fabricType, texture, pattern, confidence) {
   return `${fitSignal}. ${fabricType} with a ${texture.toLowerCase()} hand works well for ${style.name.toLowerCase()}. ${note}`;
 }
 
+const mockBackendFixtures = {
+  session: {
+    workspace: "Fabrica demo studio",
+    operator: "Mock atelier API",
+    environment: "mock",
+    version: "2026.07",
+  },
+  scanLabels: {
+    fabric: "mock-fabric-vision-v2",
+    style: "mock-style-reference-v2",
+    quote: "mock-yardage-engine-v3",
+  },
+};
+
+function waitForMockBackend(ms = 220) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function createMockId(prefix) {
+  return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+}
+
+const mockBackend = {
+  async getSession() {
+    await waitForMockBackend(180);
+    return {
+      ...mockBackendFixtures.session,
+      connectedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+  },
+  async analyzeFabric(src) {
+    await waitForMockBackend();
+    const signal = await analyzeFabricImage(src);
+    const inferred = inferFabricType(signal);
+    return {
+      id: createMockId("FABRIC"),
+      model: mockBackendFixtures.scanLabels.fabric,
+      signal,
+      inferred,
+    };
+  },
+  async analyzeStyle(src, gender) {
+    await waitForMockBackend();
+    const signal = await analyzeStyleImage(src);
+    const inferred = inferStyleProfile(signal, gender);
+    return {
+      id: createMockId("STYLE"),
+      model: mockBackendFixtures.scanLabels.style,
+      signal,
+      inferred,
+    };
+  },
+  async generateQuote(payload) {
+    await waitForMockBackend(160);
+    return {
+      id: createMockId("QUOTE"),
+      model: mockBackendFixtures.scanLabels.quote,
+      generatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      requiredYardage: payload.summary.yardage,
+      availableYardage: payload.availableYardage,
+      total: payload.summary.total,
+      status: payload.summary.yardage <= payload.availableYardage ? "cuttable" : "needs-more-cloth",
+    };
+  },
+  async saveOrder(payload) {
+    await waitForMockBackend(320);
+    return {
+      id: createMockId("ORDER"),
+      savedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      style: payload.styleName,
+      fabric: payload.fabricType,
+      requiredYardage: payload.summary.yardage,
+    };
+  },
+};
+
 export default function App() {
   const [selectedColor, setSelectedColor] = useState(colors[4]);
   const [fabricType, setFabricType] = useState("Cotton");
@@ -739,6 +817,11 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState("Upload a fabric image to improve texture detection and cost reliability.");
   const [uploadError, setUploadError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [backendSession, setBackendSession] = useState(null);
+  const [backendActivity, setBackendActivity] = useState("Connecting to mock backend...");
+  const [lastQuote, setLastQuote] = useState(null);
+  const [savedOrder, setSavedOrder] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
   const fabricInputRef = useRef(null);
   const styleInputRef = useRef(null);
 
@@ -803,10 +886,55 @@ export default function App() {
     [activeStyle, fabricType, imageSignal, texture, pattern, summary.confidence]
   );
 
+  useEffect(() => {
+    let isCurrent = true;
+
+    mockBackend.getSession().then((session) => {
+      if (!isCurrent) {
+        return;
+      }
+
+      setBackendSession(session);
+      setBackendActivity("Mock backend connected.");
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setBackendActivity("Mock backend recalculating quote...");
+
+    mockBackend
+      .generateQuote({
+        styleName: activeStyle.name,
+        fabricType,
+        texture: imageSignal?.texture || texture,
+        pattern,
+        summary,
+        availableYardage: parsedAvailableYardage,
+      })
+      .then((quote) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setLastQuote(quote);
+        setBackendActivity(`Mock quote ${quote.id} generated.`);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeStyle.name, fabricType, imageSignal, parsedAvailableYardage, pattern, summary, texture]);
+
   async function handleImageUpload(kind, file) {
     try {
       validateUpload(file);
       setUploadError("");
+      setBackendActivity(kind === "fabric" ? "Mock backend analyzing fabric image..." : "Mock backend analyzing style reference...");
       setStatusMessage(kind === "fabric" ? "Analyzing uploaded fabric image for texture and tonal balance..." : "Style reference uploaded. The preview board has been refreshed.");
 
       const src = await readImage(file);
@@ -817,21 +945,23 @@ export default function App() {
       if (kind === "fabric") {
         setIsAnalyzing(true);
         setFabricPreview(src);
-        const signal = await analyzeFabricImage(src);
-        const inferred = inferFabricType(signal);
+        const analysis = await mockBackend.analyzeFabric(src);
+        const { signal, inferred } = analysis;
         setImageSignal(signal);
         setTexture(signal.texture);
         setFabricType(inferred.type);
+        setBackendActivity(`Mock fabric scan ${analysis.id} completed.`);
         setStatusMessage(`Fabric scan complete. Detected ${inferred.type.toLowerCase()} with ${inferred.confidence}% reliability and auto-applied it. You can override the fabric type manually.`);
       } else {
         setStylePreview(src);
-        const signal = await analyzeStyleImage(src);
-        const inferred = inferStyleProfile(signal, gender);
+        const analysis = await mockBackend.analyzeStyle(src, gender);
+        const { signal, inferred } = analysis;
         setStyleImageSignal(signal);
         const preferredStyle = inferred.preferredStyles[0];
         if (preferredStyle) {
           setSelectedStyle(preferredStyle);
         }
+        setBackendActivity(`Mock style scan ${analysis.id} completed.`);
         setStatusMessage(`Style reference uploaded. ${preferredStyle || "The closest style"} is now prioritized from a ${inferred.silhouette} silhouette cue with ${inferred.confidence}% reliability.`);
       }
     } catch (error) {
@@ -840,6 +970,24 @@ export default function App() {
       setStatusMessage("Upload failed. Please replace the image and try again.");
     } finally {
       setIsAnalyzing(false);
+    }
+  }
+
+  async function handleSaveMockOrder() {
+    setIsSaving(true);
+    setBackendActivity("Mock backend saving order...");
+
+    try {
+      const order = await mockBackend.saveOrder({
+        styleName: activeStyle.name,
+        fabricType,
+        summary,
+      });
+      setSavedOrder(order);
+      setBackendActivity(`Mock order ${order.id} saved.`);
+      setStatusMessage(`${order.id} saved to the mock backend.`);
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -1356,6 +1504,30 @@ export default function App() {
               <Printer size={17} />
               Print summary
             </button>
+
+            <button
+              type="button"
+              onClick={handleSaveMockOrder}
+              disabled={isSaving}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-[20px] border border-stone-300 bg-white/80 px-4 py-4 text-sm font-semibold text-stone-900 transition hover:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <CheckCheck size={17} />
+              {isSaving ? "Saving mock order" : "Save mock order"}
+            </button>
+          </section>
+
+          <section className="panel-surface rounded-[32px] p-6 md:p-7">
+            <div className="flex items-center gap-3">
+              <ShieldCheck size={18} className="text-[#1c3429]" />
+              <h3 className="text-lg font-semibold text-stone-950">Mock backend</h3>
+            </div>
+            <div className="mt-5 space-y-3 text-sm leading-6 text-stone-700">
+              <SummaryRow label="Environment" value={backendSession?.environment || "mock"} />
+              <SummaryRow label="Workspace" value={backendSession?.workspace || "Connecting"} />
+              <SummaryRow label="Activity" value={backendActivity} />
+              <SummaryRow label="Quote" value={lastQuote ? `${lastQuote.id} · ${lastQuote.status}` : "Pending"} />
+              <SummaryRow label="Saved order" value={savedOrder ? `${savedOrder.id} · ${savedOrder.savedAt}` : "Not saved"} />
+            </div>
           </section>
 
           <section className="panel-surface rounded-[32px] p-6 md:p-7">
